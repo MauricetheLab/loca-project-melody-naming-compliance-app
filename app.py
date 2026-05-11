@@ -118,7 +118,7 @@ def build_compliance_report(df: pd.DataFrame) -> pd.DataFrame:
         po                = ("Purchase Order #", "first"),
         all_funnels       = ("Media Funnel",  lambda x: set(str(i).lower() for i in x if pd.notna(i))),
         unique_media_types= ("Media type",    lambda x: sorted([clean_val(i) for i in x if pd.notna(i) and clean_val(i)])),
-        unique_customers  = ("Customer",      lambda x: sorted([clean_val(i) for i in x if pd.notna(i) and clean_val(i)])),
+        unique_customers  = ("Customer",      lambda x: sorted(list(set([clean_val(i) for i in x if pd.notna(i) and clean_val(i)])))),
     ).reset_index()
 
     plan_stats["is_alwayson"] = (
@@ -127,7 +127,7 @@ def build_compliance_report(df: pd.DataFrame) -> pd.DataFrame:
 
     def format_media_types(types_list):
         unique = list(dict.fromkeys(types_list))
-        if len(unique) > 3:
+        if len(unique) >= 4:
             return "[multiple-media-types]"
         return f"[{'-'.join(unique)}]" if unique else "[unknown-media]"
 
