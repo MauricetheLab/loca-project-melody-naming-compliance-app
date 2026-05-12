@@ -42,14 +42,6 @@ html, body, [class*="css"] { font-family: 'Noto Sans', sans-serif; }
 .hero-text p  { font-size: .95rem; color: #00E2E0; margin: 0; }
 .hero-logo img { height: 52px; object-fit: contain; filter: brightness(0) invert(1); }
 
-.upload-wrapper {
-    background: linear-gradient(135deg, rgba(4,15,218,.06), rgba(0,226,224,.06));
-    border: 2px dashed #040FDA; border-radius: 14px;
-    padding: 1.5rem 2rem; text-align: center; margin-bottom: 1.5rem;
-}
-.upload-label { font-size: 1.05rem; font-weight: 700; color: #040FDA; margin-bottom: .3rem; }
-.upload-sub   { font-size: .85rem; color: #64748b; }
-
 .kpi-card {
     background: #FFFFFF; border: 1px solid #e2e8f0; border-radius: 12px;
     padding: 1.1rem 1.2rem; text-align: center;
@@ -74,6 +66,23 @@ html, body, [class*="css"] { font-family: 'Noto Sans', sans-serif; }
     font-size: .85rem; color: #1e293b; line-height: 1.5;
 }
 .sidebar-step strong { color: #040FDA; display: block; }
+
+/* Make the Streamlit file uploader bigger */
+[data-testid="stFileUploader"] {
+    padding: 1.5rem;
+    border-radius: 12px;
+    border: 2px dashed #040FDA !important;
+    background: linear-gradient(135deg, rgba(4,15,218,.04), rgba(0,226,224,.04));
+}
+[data-testid="stFileUploader"] label {
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+    color: #040FDA !important;
+}
+[data-testid="stFileUploaderDropzone"] {
+    min-height: 120px !important;
+}
+
 footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -112,9 +121,7 @@ with st.sidebar:
     )
 
 # ── Hero ─────────────────────────────────────────────────────────────────────────
-logo_tag = (
-    f'<div class="hero-logo"><img src="{LOGO_SRC}" /></div>' if LOGO_SRC else ""
-)
+logo_tag = f'<div class="hero-logo"><img src="{LOGO_SRC}" /></div>' if LOGO_SRC else ""
 st.markdown(
     f'<div class="hero">'
     f'<div class="hero-text"><h1>Naming Compliance Checker</h1>'
@@ -126,12 +133,22 @@ st.markdown(
 # ── Constants ────────────────────────────────────────────────────────────────────
 TARGET_AGENCY = "Labelium"
 AGENCY_CODE   = "c5"
-PALETTE = {
-    "Perfect Match": "#22c55e", "Minor Deviations": "#eab308",
-    "Moderate Deviations": "#f97316", "Non-Compliant": "#ef4444",
+
+AGENCY_MAP = {
+    "Labelium":      "c5",
+    "CJ":            "cj",
+    "Media Experts": "mex",
+    "Wavemaker":     "wm",
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────────────────
+PALETTE = {
+    "Perfect Match":       "#22c55e",
+    "Minor Deviations":    "#eab308",
+    "Moderate Deviations": "#f97316",
+    "Non-Compliant":       "#ef4444",
+}
+
+# ── Core helpers ─────────────────────────────────────────────────────────────────
 def clean_val(text):
     if pd.isna(text) or str(text).strip() == "":
         return ""
@@ -139,11 +156,8 @@ def clean_val(text):
 
 
 def build_report(df: pd.DataFrame) -> pd.DataFrame:
-    df = df[df["Agency"].str.strip() == TARGET_AGENCY].copy()
-    if df.empty:
-        st.error("No Labelium rows found. Check the Agency column.")
-        st.stop()
-
+    # Keep all agencies but tag them
+    df = df.copy()
     df["Start Date"] = pd.to_datetime(df["Start Date"])
     df["End Date"]   = pd.to_datetime(df["End Date"])
 
@@ -196,15 +210,18 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
               else f"tr-{c_str}" if has_tr
               else "aw" if has_aw
               else (clean_val(list(funnels)[0]) if funnels else "unknown"))
-        dt = "alwayson" if row["is_alwayson"] else row["plan_start"].strftime("%Y%m%d")
-        p  = clean_val(row["po"]) if row["po"] != "" else "x"
-        return f"{d}_{s}_{a}_{f}_{m}_{fp}_{dt}_{AGENCY_CODE}_{p}"
+        dt  = "alwayson" if row["is_alwayson"] else row["plan_start"].strftime("%Y%m%d")
+        ap  = AGENCY_MAP.get(str(row["age"]), "other").lower()
+        p   = clean_val(row["po"]) if row["po"] != "" else "x"
+        return f"{d}_{s}_{a}_{f}_{m}_{fp}_{dt}_{ap}_{p}"
 
     stats["Output Plan Name"] = stats.apply(gen_name, axis=1)
 
     final = diag_df.merge(stats[["Plan", "div", "sig", "age", "Output Plan Name"]], on="Plan")
-    final.rename(columns={"Plan": "Source Plan Name", "div": "Division",
-                           "sig": "Signature", "age": "Agency"}, inplace=True)
+    final.rename(columns={
+        "Plan": "Source Plan Name", "div": "Division",
+        "sig": "Signature",         "age": "Agency",
+    }, inplace=True)
     final["Agency"] = final["Agency"].fillna("Unknown")
 
     def sim(row):
@@ -213,9 +230,11 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
         return 100.0 if s.startswith(g) else round(difflib.SequenceMatcher(None, s, g).ratio() * 100, 2)
 
     final["Similarity Score (%)"] = final.apply(sim, axis=1)
-    final["Compliance Rating"]    = final["Similarity Score (%)"].apply(
-        lambda v: "Perfect Match" if v == 100 else "Minor Deviations" if v >= 85
-        else "Moderate Deviations" if v >= 60 else "Non-Compliant"
+    final["Compliance Rating"] = final["Similarity Score (%)"].apply(
+        lambda v: "Perfect Match" if v == 100
+        else "Minor Deviations" if v >= 85
+        else "Moderate Deviations" if v >= 60
+        else "Non-Compliant"
     )
 
     def missing(row):
@@ -232,8 +251,13 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
         return ", ".join(miss) if miss else "Formatting/Ordering issues only"
 
     final["Missing Naming Components"] = final.apply(missing, axis=1)
-    return final[["Agency","Division","Signature","Source Plan Name","Output Plan Name",
-                  "Similarity Score (%)","Compliance Rating","Missing Naming Components","Data Integrity Flag"]]
+
+    return final[[
+        "Agency", "Division", "Signature",
+        "Source Plan Name", "Output Plan Name",
+        "Similarity Score (%)", "Compliance Rating",
+        "Missing Naming Components", "Data Integrity Flag",
+    ]]
 
 
 def score_color(v):
@@ -280,19 +304,16 @@ def make_donut(data):
 
 
 # ── Upload ───────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="upload-wrapper">
-  <div class="upload-label">Upload your Melody Forecast Export</div>
-  <div class="upload-sub">Accepts .xlsx or .csv &nbsp;·&nbsp; Delete costing columns before uploading</div>
-</div>
-""", unsafe_allow_html=True)
-
-uploaded = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+uploaded = st.file_uploader(
+    "Upload your Melody Forecast Export (.xlsx or .csv) — delete costing columns first",
+    type=["xlsx", "csv"],
+)
 
 if uploaded is None:
     st.info("Upload a Melody export above to generate the compliance report.")
     st.stop()
 
+# ── Process ──────────────────────────────────────────────────────────────────────
 with st.spinner("Analysing naming compliance…"):
     try:
         raw = pd.read_csv(uploaded) if uploaded.name.endswith(".csv") else pd.read_excel(uploaded)
@@ -302,18 +323,21 @@ with st.spinner("Analysing naming compliance…"):
 
 # ── Filters ──────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Filters</div>', unsafe_allow_html=True)
-fc1, fc2, fc3 = st.columns(3)
+fc1, fc2, fc3, fc4 = st.columns(4)
 with fc1:
-    div_f    = st.multiselect("Division",          sorted(result["Division"].dropna().unique()))
+    agency_f  = st.multiselect("Agency", sorted(result["Agency"].dropna().unique()))
 with fc2:
-    sig_f    = st.multiselect("Signature / Brand", sorted(result["Signature"].dropna().unique()))
+    div_f     = st.multiselect("Division", sorted(result["Division"].dropna().unique()))
 with fc3:
-    rating_f = st.multiselect("Compliance Rating", list(PALETTE.keys()))
+    sig_f     = st.multiselect("Signature / Brand", sorted(result["Signature"].dropna().unique()))
+with fc4:
+    rating_f  = st.multiselect("Compliance Rating", list(PALETTE.keys()))
 
 filtered = result.copy()
-if div_f:    filtered = filtered[filtered["Division"].isin(div_f)]
-if sig_f:    filtered = filtered[filtered["Signature"].isin(sig_f)]
-if rating_f: filtered = filtered[filtered["Compliance Rating"].isin(rating_f)]
+if agency_f:  filtered = filtered[filtered["Agency"].isin(agency_f)]
+if div_f:     filtered = filtered[filtered["Division"].isin(div_f)]
+if sig_f:     filtered = filtered[filtered["Signature"].isin(sig_f)]
+if rating_f:  filtered = filtered[filtered["Compliance Rating"].isin(rating_f)]
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Key Metrics</div>', unsafe_allow_html=True)
@@ -349,10 +373,6 @@ with cr:
     d = make_donut(filtered)
     st.pyplot(d, use_container_width=True); plt.close(d)
 
-sig_fig = make_bar(filtered, "Signature", "Score by Signature / Brand")
-if sig_fig:
-    st.pyplot(sig_fig, use_container_width=True); plt.close(sig_fig)
-
 # ── Table ─────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Plan-Level Results</div>', unsafe_allow_html=True)
 
@@ -362,12 +382,15 @@ COLOR_MAP = {
     "Moderate Deviations": "background-color:#ffedd5;color:#9a3412",
     "Non-Compliant":       "background-color:#fee2e2;color:#991b1b",
 }
-st.dataframe(
+
+# Use map() instead of deprecated applymap()
+styled = (
     filtered.style
-            .applymap(lambda v: COLOR_MAP.get(v, ""), subset=["Compliance Rating"])
-            .format({"Similarity Score (%)": "{:.1f}%"}),
-    use_container_width=True, height=420,
+    .map(lambda v: COLOR_MAP.get(v, ""), subset=["Compliance Rating"])
+    .format({"Similarity Score (%)": "{:.1f}%"})
 )
+
+st.dataframe(styled, use_container_width=True, height=420)
 st.caption(f"Showing {len(filtered):,} of {len(result):,} plans")
 
 # ── Download ──────────────────────────────────────────────────────────────────────
@@ -387,16 +410,32 @@ def build_excel(df: pd.DataFrame) -> bytes:
             "Moderate Deviations": wb.add_format({"font_name":"Noto Sans","font_size":10,"border":1,"bg_color":"#ffedd5","font_color":"#9a3412"}),
             "Non-Compliant":       wb.add_format({"font_name":"Noto Sans","font_size":10,"border":1,"bg_color":"#fee2e2","font_color":"#991b1b"}),
         }
+
+        # Sheet 1 — Full compliance data
         df.to_excel(writer, sheet_name="Compliance Data", index=False)
         ws = writer.sheets["Compliance Data"]
         ws.hide_gridlines(2)
-        for i, (c, w) in enumerate(zip(df.columns, [14,12,20,55,55,14,22,35,25])):
+        for i, (c, w) in enumerate(zip(df.columns, [14, 12, 20, 55, 55, 14, 22, 35, 25])):
             ws.write(0, i, c, hdr); ws.set_column(i, i, w)
         for ri, row in df.iterrows():
             for ci, (c, v) in enumerate(row.items()):
                 fmt = rfmt.get(str(v), cell) if c == "Compliance Rating" else (pct if c == "Similarity Score (%)" else cell)
                 ws.write(ri + 1, ci, v if pd.notna(v) else "", fmt)
 
+        # Sheet 2 — Clean plan name comparison (Agency / Division / Brand / Old / New)
+        export_cols = ["Agency", "Division", "Signature", "Source Plan Name", "Output Plan Name"]
+        plan_df = df[export_cols].copy()
+        plan_df.columns = ["Agency", "Division", "Brand", "Current Plan Name", "Proposed Plan Name"]
+        plan_df.to_excel(writer, sheet_name="Plan Name Comparison", index=False)
+        ws2 = writer.sheets["Plan Name Comparison"]
+        ws2.hide_gridlines(2)
+        for i, (c, w) in enumerate(zip(plan_df.columns, [14, 12, 22, 60, 60])):
+            ws2.write(0, i, c, hdr); ws2.set_column(i, i, w)
+        for ri, row in plan_df.iterrows():
+            for ci, v in enumerate(row):
+                ws2.write(ri + 1, ci, v if pd.notna(v) else "", cell)
+
+        # Sheet 3 — Summary
         ws_s = wb.add_worksheet("Summary")
         ws_s.hide_gridlines(2)
         ws_s.write("B2", "Summary Statistics",
@@ -410,6 +449,7 @@ def build_excel(df: pd.DataFrame) -> bytes:
             ws_s.write(4+i, 2, row["Count"],  cell)
             ws_s.write(4+i, 3, row["%"],      pct)
         ws_s.set_column("B:D", 20)
+
     buf.seek(0)
     return buf.read()
 
