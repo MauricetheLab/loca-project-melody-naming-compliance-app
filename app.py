@@ -239,6 +239,12 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
     df["Start Date"] = pd.to_datetime(df["Start Date"])
     df["End Date"]   = pd.to_datetime(df["End Date"])
 
+    # Explicitly destroy sensitive cost data from memory
+    SENSITIVE_COLS = ["Cost", "Cost_currency", "Cost Type"]
+    cols_to_drop = [c for c in SENSITIVE_COLS if c in df.columns]
+    if cols_to_drop:
+        df.drop(columns=cols_to_drop, inplace=True)
+
     def diag(group):
         issues = []
         for col in ["Division", "Signature", "Axis", "Franchise", "Agency"]:
