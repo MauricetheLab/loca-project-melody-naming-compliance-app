@@ -105,10 +105,9 @@ with st.sidebar:
     st.markdown("### How to export from Melody")
     for title, desc in [
         ("Step 1", "Log into Melody and navigate to your campaign forecast"),
-        ("Step 2", "Select the date range and all Labelium plans"),
+        ("Step 2", "Select the date range"),
         ("Step 3", "Click Export and choose Excel (.xlsx) format"),
-        ("Step 4", "Open the file and delete all costing / budget columns"),
-        ("Step 5", "Save the file and upload it in the main panel"),
+        ("Step 4", "Save the file and upload it in the main panel"),
     ]:
         st.markdown(
             f'<div class="sidebar-step"><strong>{title}</strong>{desc}</div>',
@@ -117,9 +116,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown(
-        '<div style="font-size:.78rem;color:#94a3b8;text-align:center;line-height:1.5;">'
-        'Powered by <strong style="color:#040FDA;">Cosmo5</strong><br>'
-        'Questions? Contact the data team</div>',
+        '<div style="font-size:.78rem;color:#94a3b8;text-align:center;line-height:1.8;">'
+        'Powered by <strong style="color:#00E2E0;">Cosmo5</strong><br>'
+        'Questions? Contact the data team<br>'
+        '<a href="mailto:adrien.chanson@cosmo5.com" style="color:#00E2E0;text-decoration:none;">'
+        'adrien.chanson@cosmo5.com</a></div>',
         unsafe_allow_html=True,
     )
 
@@ -127,8 +128,8 @@ with st.sidebar:
 logo_tag = f'<div class="hero-logo"><img src="{LOGO_SRC}" /></div>' if LOGO_SRC else ""
 st.markdown(
     f'<div class="hero">'
-    f'<div class="hero-text"><h1>Naming Compliance Checker</h1>'
-    f"<p>Labelium x L'Oreal Canada &nbsp;·&nbsp; Powered by Cosmo5</p></div>"
+    f'<div class="hero-text"><h1>L\'Oréal Melody Plan Naming Compliance Checker</h1>'
+    f'<p>Powered by <strong style="color:#00E2E0;">Cosmo5</strong></p></div>'
     f"{logo_tag}</div>",
     unsafe_allow_html=True,
 )
@@ -161,6 +162,40 @@ def clean_val(text):
 def build_report(df: pd.DataFrame) -> pd.DataFrame:
     # Keep all agencies but tag them
     df = df.copy()
+
+    # Normalize column names — trim whitespace + case-insensitive remapping
+    df.columns = df.columns.str.strip()
+    canonical = {
+        "start date":       "Start Date",
+        "end date":         "End Date",
+        "division":         "Division",
+        "signature":        "Signature",
+        "axis":             "Axis",
+        "franchise":        "Franchise",
+        "agency":           "Agency",
+        "media funnel":     "Media Funnel",
+        "media type":       "Media type",
+        "customer":         "Customer",
+        "purchase order #": "Purchase Order #",
+        "purchase order":   "Purchase Order #",
+        "plan":             "Plan",
+    }
+    df.rename(columns={c: canonical[c.strip().lower()]
+                       for c in df.columns if c.strip().lower() in canonical},
+              inplace=True)
+
+    # Show helpful error if required columns are still missing
+    required = ["Agency", "Division", "Signature", "Axis", "Franchise",
+                "Media Funnel", "Media type", "Customer", "Purchase Order #",
+                "Start Date", "End Date", "Plan"]
+    missing_cols = [c for c in required if c not in df.columns]
+    if missing_cols:
+        st.error(
+            f"The uploaded file is missing these required columns: **{', '.join(missing_cols)}**\n\n"
+            f"Columns found in your file: `{', '.join(df.columns.tolist())}`"
+        )
+        st.stop()
+
     df["Start Date"] = pd.to_datetime(df["Start Date"])
     df["End Date"]   = pd.to_datetime(df["End Date"])
 
@@ -189,6 +224,7 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
         fra                = ("Franchise",        "first"),
         age                = ("Agency",           "first"),
         po                 = ("Purchase Order #", "first"),
+        created_by         = ("Created By",       "first"),
         all_funnels        = ("Media Funnel",     lambda x: set(str(i).lower() for i in x if pd.notna(i))),
         unique_media_types = ("Media type",       lambda x: sorted([clean_val(i) for i in x if pd.notna(i) and clean_val(i)])),
         unique_customers   = ("Customer",         lambda x: sorted(list(set([clean_val(i) for i in x if pd.notna(i) and clean_val(i)])))),
@@ -220,12 +256,14 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
 
     stats["Output Plan Name"] = stats.apply(gen_name, axis=1)
 
-    final = diag_df.merge(stats[["Plan", "div", "sig", "age", "Output Plan Name"]], on="Plan")
+    final = diag_df.merge(stats[["Plan", "div", "sig", "age", "created_by", "Output Plan Name"]], on="Plan")
     final.rename(columns={
         "Plan": "Source Plan Name", "div": "Division",
         "sig": "Signature",         "age": "Agency",
+        "created_by": "Created By",
     }, inplace=True)
-    final["Agency"] = final["Agency"].fillna("Unknown")
+    final["Agency"]     = final["Agency"].fillna("Unknown")
+    final["Created By"] = final["Created By"].fillna("Unknown")
 
     def sim(row):
         s = str(row["Source Plan Name"]).strip().lower()
@@ -256,7 +294,7 @@ def build_report(df: pd.DataFrame) -> pd.DataFrame:
     final["Missing Naming Components"] = final.apply(missing, axis=1)
 
     return final[[
-        "Agency", "Division", "Signature",
+        "Agency", "Division", "Signature", "Created By",
         "Source Plan Name", "Output Plan Name",
         "Similarity Score (%)", "Compliance Rating",
         "Missing Naming Components", "Data Integrity Flag",
@@ -326,21 +364,24 @@ with st.spinner("Analysing naming compliance…"):
 
 # ── Filters ──────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Filters</div>', unsafe_allow_html=True)
-fc1, fc2, fc3, fc4 = st.columns(4)
+fc1, fc2, fc3, fc4, fc5 = st.columns(5)
 with fc1:
-    agency_f  = st.multiselect("Agency", sorted(result["Agency"].dropna().unique()))
+    agency_f    = st.multiselect("Agency", sorted(result["Agency"].dropna().unique()))
 with fc2:
-    div_f     = st.multiselect("Division", sorted(result["Division"].dropna().unique()))
+    div_f       = st.multiselect("Division", sorted(result["Division"].dropna().unique()))
 with fc3:
-    sig_f     = st.multiselect("Signature / Brand", sorted(result["Signature"].dropna().unique()))
+    sig_f       = st.multiselect("Signature / Brand", sorted(result["Signature"].dropna().unique()))
 with fc4:
-    rating_f  = st.multiselect("Compliance Rating", list(PALETTE.keys()))
+    creator_f   = st.multiselect("Created By", sorted(result["Created By"].dropna().unique()))
+with fc5:
+    rating_f    = st.multiselect("Compliance Rating", list(PALETTE.keys()))
 
 filtered = result.copy()
-if agency_f:  filtered = filtered[filtered["Agency"].isin(agency_f)]
-if div_f:     filtered = filtered[filtered["Division"].isin(div_f)]
-if sig_f:     filtered = filtered[filtered["Signature"].isin(sig_f)]
-if rating_f:  filtered = filtered[filtered["Compliance Rating"].isin(rating_f)]
+if agency_f:   filtered = filtered[filtered["Agency"].isin(agency_f)]
+if div_f:      filtered = filtered[filtered["Division"].isin(div_f)]
+if sig_f:      filtered = filtered[filtered["Signature"].isin(sig_f)]
+if creator_f:  filtered = filtered[filtered["Created By"].isin(creator_f)]
+if rating_f:   filtered = filtered[filtered["Compliance Rating"].isin(rating_f)]
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Key Metrics</div>', unsafe_allow_html=True)
@@ -424,7 +465,7 @@ def build_excel(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, sheet_name="Compliance Data", index=False)
         ws = writer.sheets["Compliance Data"]
         ws.hide_gridlines(2)
-        for i, (c, w) in enumerate(zip(df.columns, [14, 12, 20, 55, 55, 14, 22, 35, 25])):
+        for i, (c, w) in enumerate(zip(df.columns, [14, 12, 20, 20, 55, 55, 14, 22, 35, 25])):
             ws.write(0, i, c, hdr); ws.set_column(i, i, w)
         for ri, row in df.iterrows():
             for ci, (c, v) in enumerate(row.items()):
