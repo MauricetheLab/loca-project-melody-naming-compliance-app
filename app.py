@@ -67,20 +67,23 @@ html, body, [class*="css"] { font-family: 'Noto Sans', sans-serif; }
 }
 .sidebar-step strong { color: #040FDA; display: block; }
 
-/* Make the Streamlit file uploader bigger */
+/* Make the Streamlit file uploader bigger and visible on dark bg */
 [data-testid="stFileUploader"] {
     padding: 1.5rem;
     border-radius: 12px;
-    border: 2px dashed #040FDA !important;
-    background: linear-gradient(135deg, rgba(4,15,218,.04), rgba(0,226,224,.04));
+    border: 2px dashed #00E2E0 !important;
+    background: linear-gradient(135deg, rgba(4,15,218,.2), rgba(0,226,224,.1));
 }
 [data-testid="stFileUploader"] label {
     font-size: 1rem !important;
     font-weight: 700 !important;
-    color: #040FDA !important;
+    color: #00E2E0 !important;
 }
 [data-testid="stFileUploaderDropzone"] {
     min-height: 120px !important;
+}
+[data-testid="stFileUploaderDropzoneInstructions"] span {
+    color: #FFFFFF !important;
 }
 
 footer { visibility: hidden; }
@@ -361,6 +364,12 @@ for col, val, label, cls in zip(
     )
 
 st.markdown("<br>", unsafe_allow_html=True)
+st.caption(
+    "ℹ️  **Avg Score** = average name similarity across all plans (0–100%). &nbsp; "
+    "**% Perfect in donut** = share of plans scoring exactly 100%. &nbsp; "
+    "A plan can score 92% (close but not perfect), which raises the average without counting as Perfect — "
+    "that's why Avg Score is typically higher than the Perfect %."
+)
 
 # ── Charts ───────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Performance Charts</div>', unsafe_allow_html=True)
@@ -422,20 +431,7 @@ def build_excel(df: pd.DataFrame) -> bytes:
                 fmt = rfmt.get(str(v), cell) if c == "Compliance Rating" else (pct if c == "Similarity Score (%)" else cell)
                 ws.write(ri + 1, ci, v if pd.notna(v) else "", fmt)
 
-        # Sheet 2 — Clean plan name comparison (Agency / Division / Brand / Old / New)
-        export_cols = ["Agency", "Division", "Signature", "Source Plan Name", "Output Plan Name"]
-        plan_df = df[export_cols].copy()
-        plan_df.columns = ["Agency", "Division", "Brand", "Current Plan Name", "Proposed Plan Name"]
-        plan_df.to_excel(writer, sheet_name="Plan Name Comparison", index=False)
-        ws2 = writer.sheets["Plan Name Comparison"]
-        ws2.hide_gridlines(2)
-        for i, (c, w) in enumerate(zip(plan_df.columns, [14, 12, 22, 60, 60])):
-            ws2.write(0, i, c, hdr); ws2.set_column(i, i, w)
-        for ri, row in plan_df.iterrows():
-            for ci, v in enumerate(row):
-                ws2.write(ri + 1, ci, v if pd.notna(v) else "", cell)
-
-        # Sheet 3 — Summary
+        # Sheet 2 — Summary
         ws_s = wb.add_worksheet("Summary")
         ws_s.hide_gridlines(2)
         ws_s.write("B2", "Summary Statistics",
